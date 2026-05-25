@@ -1,0 +1,6 @@
+{
+  "name": "Nataktrip Babel",
+  "description": "Website rekomendasi trip sederhana untuk Pantai, Restoran, dan Cafe di wilayah Bangka dan Belitung.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
