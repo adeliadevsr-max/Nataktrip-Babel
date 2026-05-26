@@ -1,328 +1,239 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, Send, Bot, User, HelpCircle, Heart, Check, RefreshCw, Star, Info, Compass, MessageSquareCode, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
+import React from 'react';
+import { Star, MapPin, Lock, Sparkles, Heart, Clock, Compass, Car } from 'lucide-react';
 import { Destination, UserStatus } from '../types';
-import { DESTINATIONS } from '../data';
+import ReviewSection from './ReviewSection';
 
-interface BabelAIBotProps {
-  userStatus: UserStatus;
-  onOpenUpgrade: () => void;
-  favorites: string[];
+interface DestinationCardProps {
+  key?: any;
+  destination: Destination;
+  isLocked: boolean;
+  onUpgradeClick?: () => void;
+  isFavorite: boolean;
   onToggleFavorite: (id: string) => void;
-  activeIsland: 'Bangka' | 'Belitung';
+  userStatus: UserStatus;
 }
 
-interface Message {
-  id: string;
-  sender: 'ai' | 'user';
-  text: string;
-  timestamp: Date;
-  suggestions?: Destination[];
-}
-
-export default function BabelAIBot({
-  userStatus,
-  onOpenUpgrade,
-  favorites,
+export default function DestinationCard({
+  destination,
+  isLocked,
+  onUpgradeClick,
+  isFavorite,
   onToggleFavorite,
-  activeIsland
-}: BabelAIBotProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      sender: 'ai',
-      text: `Halo Kak! 🤖 Saya NatakAI, asisten bot travel personal Bangka Belitung Anda. Ada yang bisa saya bantu untuk merencanakan liburan impian Kakak hari ini?\n\nKakak bisa tanya rekomendasi pantai, kuliner lempah kuning, gangan, tempat sarapan pagi, atau kedai kopi pecinan tempo dulu!`,
-      timestamp: new Date()
+  userStatus,
+}: DestinationCardProps) {
+
+  // 1. SAFETY GUARD: Jika data destination tidak ada, jangan render isi kartu agar tidak crash
+  if (!destination && !isLocked) {
+    return (
+      <div className="p-4 bg-gray-50 text-gray-400 text-xs rounded-xl border border-dashed text-center">
+        Memuat data tempat...
+      </div>
+    );
+  }
+
+  // SAFE RATING FIX (Mengubah string/null menjadi angka secara aman)
+  const safeRating = Number(destination?.rating) || 0;
+
+  // Get Category icon or designator
+  const getCategoryTheme = () => {
+    switch (destination?.category) {
+      case 'Pantai':
+        return { emoji: '🏖️', bg: 'bg-cyan-50 text-cyan-700 border-cyan-100' };
+      case 'Restoran':
+        return { emoji: '🍽️', bg: 'bg-amber-50 text-amber-700 border-amber-100' };
+      case 'Cafe':
+        return { emoji: '☕', bg: 'bg-orange-50 text-orange-700 border-orange-100' };
+      default:
+        return { emoji: '📍', bg: 'bg-gray-50 text-gray-700 border-gray-100' };
     }
-  ]);
-
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto scroll
-  useEffect(() => {
-    if (!isCollapsed) {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, isTyping, isCollapsed]);
-
-  const starterQuestions = [
-    { text: "Rekomendasi Pantai Granit Eksotis", key: "pantai" },
-    { text: "Kuliner Lempah Kuning & Gangan terbaik", key: "gangan" },
-    { text: "Kedai Kopi Saring tertua & tersohor", key: "kopi" },
-    { text: "Petualangan Film Laskar Pelangi", key: "laskar" }
-  ];
-
-  const handleSend = (textToSend: string) => {
-    if (!textToSend.trim()) return;
-
-    // Add user message
-    const userMsg: Message = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      text: textToSend,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setIsTyping(true);
-
-    // Simulate AI response delay
-    setTimeout(() => {
-      const lowerText = textToSend.toLowerCase();
-      let aiResponseText = '';
-      let matchedSpots: Destination[] = [];
-
-      // Keyword searching engine on DESTINATIONS list
-      if (lowerText.includes('pantai') || lowerText.includes('wisata alam') || lowerText.includes('sunset') || lowerText.includes('laut')) {
-        matchedSpots = DESTINATIONS.filter(item => item.category === 'Pantai' && item.island === activeIsland);
-        aiResponseText = `Berikut adalah daftar pantai eksotis pilihan terbaik warga lokal di Pulau ${activeIsland}. Selai menawarkan pasir kuarsa seputih salju, pantai-pantai ini terkenal dengan tumpukan batu granit purbanya yang sangat megah. Kakak bisa langsung simpan destinasi ini ke perencana rute (❤️ Itinerary)!`;
-      } 
-      else if (lowerText.includes('lempah') || lowerText.includes('gangan') || lowerText.includes('ikan') || lowerText.includes('seafood') || lowerText.includes('makan') || lowerText.includes('resto') || lowerText.includes('kuliner')) {
-        matchedSpots = DESTINATIONS.filter(item => item.category === 'Restoran' && item.island === activeIsland);
-        aiResponseText = `Wah, berwisata ke Bangka Belitung tidak lengkap tanpa mencicipi masakan sup berkuah kuning nanas pedas segar! Berikut adalah daftar rekomendasi restoran otentik pemenang selera warga lokal di Pulau ${activeIsland} untuk mengenyangkan perut Kakak:`;
-      } 
-      else if (lowerText.includes('kopi') || lowerText.includes('cafe') || lowerText.includes('nongkrong') || lowerText.includes('santai') || lowerText.includes('sarapan')) {
-        matchedSpots = DESTINATIONS.filter(item => item.category === 'Cafe' && item.island === activeIsland);
-        aiResponseText = `Masyarakat Bangka Belitung terkenal dengan budaya "Ngopi" yang kuat sejak zaman timah kolonial. Berikut adalah destinasi kedai Kopi Saring Arang kayu legendaris dan cafe bernuansa estetik di Pulau ${activeIsland}:`;
-      } 
-      else if (lowerText.includes('laskar') || lowerText.includes('pelangi') || lowerText.includes('sijuk') || lowerText.includes('belitung')) {
-        matchedSpots = DESTINATIONS.filter(item => item.id.includes('l-pantai-1') || item.id.includes('l-pantai-2'));
-        aiResponseText = `Destinasi Laskar Pelangi murni berada di barat laut pulau Belitung (Kecamatan Sijuk). Tempat wisatanya meliputi Pantai Tanjung Tinggi dengan batu pasir raksasa yang menjadi set shooting film, serta Tanjung Kelayang tempat menyewa kapal keliling pulau pasir:`;
-      }
-      else {
-        // General fallback
-        matchedSpots = DESTINATIONS.filter(item => item.island === activeIsland).slice(0, 3);
-        aiResponseText = `Pertanyaan yang bagus Kak! Untuk menjelajahi keindahan Pulau ${activeIsland}, saya sangat meluncurkan rekomendasi destinasi top berikut yang wajib dikunjungi minimal satu kali seumur hidup:`;
-      }
-
-      const aiMsg: Message = {
-        id: `ai-${Date.now()}`,
-        sender: 'ai',
-        text: aiResponseText,
-        timestamp: new Date(),
-        suggestions: matchedSpots
-      };
-
-      setMessages(prev => [...prev, aiMsg]);
-      setIsTyping(false);
-    }, 1100);
   };
 
-  return (
-    <div className="w-full max-w-7xl mx-auto bg-white border border-gray-150 rounded-2xl overflow-hidden shadow-xs hover:shadow-subtle transition-all duration-300">
-      {/* Bot Header */}
-      <div 
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 text-white p-3.5 flex items-center justify-between border-b border-indigo-500/10 cursor-pointer select-none"
-      >
-        <div className="flex items-center gap-2.5">
-          <div className="w-8.5 h-8.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full flex items-center justify-center text-white ring-2 ring-white/5">
-            <Bot className="w-4 h-4 text-emerald-400 animate-bounce-subtle" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5 matches-label-alignment">
-              <h4 className="text-xs sm:text-sm font-extrabold tracking-tight text-slate-100 flex items-center gap-1">
-                🤖 NatakAI Travel Bot
-              </h4>
-              <span className="text-[8px] font-black font-mono tracking-wider bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded uppercase leading-none border border-emerald-500/20">
-                PRO AI
-              </span>
-            </div>
-            <p className="text-[9.5px] text-slate-400 leading-none mt-1">
-              {isCollapsed ? "Klik untuk berkonsultasi mengenai petualangan Babel..." : "Konsultan pariwisata personal interaktif Anda"}
-            </p>
-          </div>
-        </div>
+  const theme = getCategoryTheme();
 
-        <div className="flex items-center gap-3">
-          <span className="hidden sm:inline-flex items-center gap-1 text-[9px] font-mono font-bold text-slate-400 bg-white/5 px-2 py-0.5 rounded border border-white/5">
-            PINTAR OLEH GEMINI ✦
+  // Tampilan jika card terkunci (Premium Only)
+  if (isLocked) {
+    return (
+      <div
+        onClick={onUpgradeClick}
+        className="group relative h-48 bg-gray-50/70 border border-dashed border-gray-200 rounded-xl p-4 flex flex-col justify-center items-center text-center cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-all duration-300 select-none overflow-hidden"
+      >
+        <div className="absolute inset-0 bg-radial-at-t from-gray-100/50 via-transparent to-transparent opacity-60" />
+
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-9 h-9 bg-white border border-gray-200 rounded-full flex items-center justify-center shadow-xs text-amber-500 mb-2.5 group-hover:scale-110 transition-transform duration-300">
+            <Lock className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors" />
+          </div>
+
+          <span className="text-sm font-semibold text-gray-800 tracking-tight flex items-center gap-1">
+            🔒 Premium Only
           </span>
-          <button 
-            type="button"
-            className="text-slate-400 hover:text-white transition-colors focus:outline-none"
-          >
-            {isCollapsed ? (
-              <ChevronDown className="w-5 h-5 text-indigo-400 animate-pulse" />
-            ) : (
-              <ChevronUp className="w-5 h-5 text-indigo-400" />
-            )}
-          </button>
+
+          <p className="text-xs text-gray-400 mt-1 font-sans px-4">
+            Upgrade untuk melihat lebih banyak tempat
+          </p>
+
+          <span className="text-[10px] mt-2.5 font-bold font-mono text-blue-600 bg-blue-50/80 px-2 py-0.5 rounded-sm uppercase tracking-wider group-hover:bg-blue-600 group-hover:text-white transition-colors duration-200">
+            Unlock Now
+          </span>
         </div>
       </div>
+    );
+  }
 
-      {!isCollapsed && (
-        <>
-          {userStatus !== 'Premium' ? (
-            /* LOCK STATE COVER */
-            <div className="relative">
-              {/* Blurred mock chat behind */}
-              <div className="p-4 opacity-15 pointer-events-none select-none filter blur-xs space-y-3">
-                <div className="flex items-start gap-2 max-w-lg">
-                  <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center" />
-                  <div className="bg-gray-100 p-2.5 rounded-xl text-xs text-gray-400">Halo Kak! Butuh rekomendasi kuliner seafood legendaris di Sungailiat?</div>
-                </div>
-                <div className="flex items-start justify-end gap-2 text-right">
-                  <div className="bg-blue-100 p-2.5 rounded-xl text-xs text-blue-850">Ya, tolong rekomendasikan lempah kuning terbaik di sekitar Pangkalpinang...</div>
+  // Tampilan utama Card Wisata/Tempat
+  return (
+    <div
+      className={`group relative bg-white border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between h-auto ${
+        isFavorite
+          ? 'border-pink-200 bg-pink-50/5'
+          : 'border-gray-100 hover:border-gray-200/80'
+      }`}
+    >
+      {/* Gambar Destinasi */}
+      {destination?.imageUrl && (
+        <div className="w-full h-40 relative overflow-hidden bg-gray-100">
+          <img
+            src={destination.imageUrl}
+            alt={destination.name}
+            referrerPolicy="no-referrer"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-gray-900/10 via-transparent to-transparent" />
+        </div>
+      )}
+
+      {/* Konten Utama */}
+      <div className="p-4 flex flex-col justify-between flex-1 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            
+            {/* Tag Kategori */}
+            <span
+              className={`inline-flex items-center gap-1 text-[11px] font-bold font-mono px-2 py-0.5 rounded-md border ${theme.bg}`}
+            >
+              <span>{theme.emoji}</span>
+              <span>{destination?.category || 'Umum'}</span>
+            </span>
+
+            {/* Tombol Favorit & Rating */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFavorite(destination.id);
+                }}
+                className={`p-1 rounded-md border transition-all duration-200 cursor-pointer ${
+                  isFavorite
+                    ? 'bg-pink-50 text-pink-600 border-pink-200 hover:bg-pink-100'
+                    : 'bg-white text-gray-400 border-gray-100 hover:text-pink-500 hover:border-pink-100'
+                }`}
+              >
+                <Heart className={`w-3.5 h-3.5 ${isFavorite ? 'fill-current' : ''}`} />
+              </button>
+
+              {/* Tampilan Rating */}
+              <div className="flex items-center gap-1 text-xs font-semibold text-gray-800 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded-md">
+                <Star className="w-3.5 h-3.5 fill-amber-400 stroke-amber-400" />
+                <span className="font-mono">{safeRating.toFixed(1)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Nama Tempat */}
+          <h3 className="font-bold text-gray-900 text-base tracking-tight leading-tight group-hover:text-blue-600 transition-colors pt-1">
+            {destination?.name}
+          </h3>
+
+          {/* Lokasi */}
+          <div className="flex items-center gap-1 text-xs text-gray-400 font-medium">
+            <MapPin className="w-3 h-3 text-gray-400 shrink-0" />
+            <span className="truncate">{destination?.location}</span>
+          </div>
+        </div>
+
+        {/* Deskripsi berdasarkan Status User (Premium vs Free) */}
+        <div className="space-y-3">
+          <p className="text-xs text-gray-600 leading-relaxed font-sans font-normal">
+            {destination?.description}
+          </p>
+
+          {userStatus === 'Premium' ? (
+            /* Layout Premium */
+            <div className="bg-slate-50 border border-slate-100/80 rounded-lg p-2.5 space-y-2 select-none">
+              <div className="flex items-center gap-1 border-b border-dashed border-slate-200 pb-1 mb-1">
+                <Sparkles className="w-3 h-3 text-indigo-500 fill-current animate-pulse" />
+                <span className="text-[9px] font-extrabold font-mono tracking-wider text-slate-500 uppercase">
+                  Premium Travel Guide Log
+                </span>
+              </div>
+
+              <div className="flex items-start gap-1.5 leading-tight">
+                <Compass className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                <div className="text-[10px] leading-relaxed text-slate-600">
+                  <strong className="text-gray-800 font-bold">Unik:</strong> {destination?.uniqueness}
                 </div>
               </div>
 
-              <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center text-center p-5 text-white space-y-3">
-                <div className="w-12 h-12 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 rounded-full flex items-center justify-center text-xl font-bold animate-bounce-subtle shadow-md">
-                  ✨
+              <div className="flex items-start gap-1.5 leading-tight">
+                <Car className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                <div className="text-[10px] leading-relaxed text-slate-600">
+                  <strong className="text-gray-800 font-bold">Akses:</strong> {destination?.access}
                 </div>
-                <div className="space-y-1 max-w-md">
-                  <h4 className="text-xs sm:text-sm font-extrabold tracking-tight">buka asisten natakai travel consultant</h4>
-                  <p className="text-[10.5px] text-slate-300 leading-relaxed max-w-xs sm:max-w-sm">
-                    Fitur Eksklusif PRO untuk mengobrol, mencari pantai eksotis tersepi, mendapat rekomendasi warung kopi pecinan legendaris, dan langsung menyalin rute.
-                  </p>
+              </div>
+
+              <div className="flex items-start gap-1.5 leading-tight">
+                <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="text-[10px] leading-relaxed text-slate-600">
+                  <strong className="text-gray-800 font-bold">Waktu Ideal & Jam:</strong> {destination?.openingHours}
                 </div>
-                <button
-                  onClick={onOpenUpgrade}
-                  className="px-4.5 py-2 bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-slate-950 font-black rounded-lg text-[10.5px] uppercase tracking-wide shadow-lg active:scale-95 transition-all cursor-pointer flex items-center gap-1"
-                >
-                  <Sparkles className="w-3 h-3 fill-slate-950" />
-                  Gabung VIP (Rp 29k / 3 Bln)
-                </button>
               </div>
             </div>
           ) : (
-            /* ACTIVE CHATBOT INTERFACE (Compact Height of 320px) */
-            <div className="flex flex-col h-[320px] transition-all duration-300">
-              {/* Messages Flow */}
-              <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5 bg-slate-50/50">
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex gap-2.5 max-w-[88%] ${msg.sender === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
-                  >
-                    {/* Avatar Icon */}
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-xs ${
-                      msg.sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-700 text-white'
-                    }`}>
-                      {msg.sender === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5 text-yellow-300" />}
-                    </div>
-
-                    {/* Message Bubble Column */}
-                    <div className="space-y-1.5 max-w-full">
-                      <div className={`p-2.5 rounded-xl text-xs sm:text-[13px] shadow-xs leading-relaxed ${
-                        msg.sender === 'user'
-                          ? 'bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-tr-none'
-                          : 'bg-white border border-gray-150 text-gray-800 rounded-tl-none whitespace-pre-wrap'
-                      }`}>
-                        {msg.text}
-                      </div>
-
-                      {/* Attachment matched tourism spots suggestions cards */}
-                      {msg.suggestions && msg.suggestions.length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-w-full">
-                          {msg.suggestions.slice(0, 4).map((spot) => {
-                            const isFav = favorites.includes(spot.id);
-                            return (
-                              <div key={spot.id} className="bg-white border border-gray-150 hover:border-indigo-200 rounded-xl overflow-hidden shadow-xs flex flex-col justify-between p-2 transition-all">
-                                <div className="flex gap-2 items-start">
-                                  {spot.imageUrl && (
-                                    <img
-                                      src={spot.imageUrl}
-                                      alt={spot.name}
-                                      referrerPolicy="no-referrer"
-                                      className="w-10 h-10 object-cover rounded-lg shrink-0 border border-gray-100"
-                                    />
-                                  )}
-                                  <div className="min-w-0 flex-1">
-                                    <h5 className="text-[10.5px] font-black text-gray-800 truncate">{spot.name}</h5>
-                                    <span className="text-[8.5px] font-extrabold font-mono text-indigo-500 uppercase">{spot.category}</span>
-                                    <p className="text-[9.5px] text-gray-400 truncate">{spot.location}</p>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center justify-between border-t border-gray-100 pt-1.5 mt-1.5">
-                                  <span className="text-[9.5px] font-bold text-amber-500 flex items-center gap-0.5">
-                                    <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
-                                    {spot.rating}
-                                  </span>
-                                  <button
-                                    onClick={() => onToggleFavorite(spot.id)}
-                                    className={`text-[9px] font-extrabold px-2 py-0.5 rounded cursor-pointer transition-all ${
-                                      isFav
-                                        ? 'bg-red-50 text-red-600 border border-red-100'
-                                        : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100'
-                                    }`}
-                                  >
-                                    {isFav ? '❤️ Disimpan' : '➕ Masukkan Rute'}
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      <span className="text-[8.5px] text-gray-400 block px-1 tracking-wider">
-                        {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-
-                {isTyping && (
-                  <div className="flex gap-2 mr-auto">
-                    <div className="w-7 h-7 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center shrink-0">
-                      <Bot className="w-3.5 h-3.5 text-yellow-300" />
-                    </div>
-                    <div className="bg-white border border-gray-150 p-2 px-3 rounded-xl rounded-tl-none flex items-center gap-1.5 shadow-xs">
-                      <span className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                  </div>
-                )}
-                <div ref={scrollRef} />
+            /* Layout Free/Gratis */
+            <div className="border border-gray-100 bg-gray-50/50 rounded-lg p-2.5 space-y-1.5 text-[11px] leading-relaxed text-gray-500 font-sans">
+              <div>
+                🌿 <strong>Keunikan:</strong>{' '}
+                {destination?.uniqueness
+                  ? destination.uniqueness.split(',')[0] + '.'
+                  : 'Keindahan alam tersembunyi khas lokal.'}
               </div>
 
-              {/* Quick Help Tags */}
-              <div className="p-1.5 border-t border-gray-100 bg-gray-50 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none select-none">
-                <span className="text-[8.5px] font-mono uppercase font-black text-gray-400 shrink-0 pl-1">Saran Topik:</span>
-                {starterQuestions.map((q) => (
-                  <button
-                    key={q.key}
-                    onClick={() => handleSend(q.text)}
-                    className="text-[9.5px] font-bold text-gray-600 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-100 px-2 py-0.5 rounded-full cursor-pointer transition-all shrink-0"
-                  >
-                    ✧ {q.text}
-                  </button>
-                ))}
-              </div>
+              <div className="pt-1.5 border-t border-gray-100 flex flex-col gap-1 text-[10.5px]">
+                <div className="truncate" title={destination?.access}>
+                  🚗 <strong>Akses:</strong>{' '}
+                  {destination?.access ? destination.access.split('.')[0] + '.' : 'Akses jalan aspal pariwisata utama.'}
+                </div>
 
-              {/* Input Form Box */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSend(input);
-                }}
-                className="p-2 border-t border-gray-100 bg-white flex gap-2"
-              >
-                <input
-                  type="text"
-                  placeholder={`Ketik tentang wisata ${activeIsland}...`}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  className="flex-1 bg-gray-50/80 border border-gray-200 focus:border-indigo-400 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="p-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shrink-0 transition-all flex items-center justify-center cursor-pointer active:scale-95 shadow-xs"
-                >
-                  <Send className="w-3.5 h-3.5 text-indigo-400" />
-                </button>
-              </form>
+                <div className="truncate" title={destination?.openingHours}>
+                  🕒 <strong>Jam Buka:</strong>{' '}
+                  {destination?.openingHours ? destination.openingHours.split('(')[0] : 'Setiap Hari.'}
+                </div>
+              </div>
             </div>
           )}
-        </>
-      )}
+        </div>
+
+        {/* Bagian Bawah / Highlight */}
+        <div className="border-t border-gray-50 pt-2.5 mt-auto flex items-center justify-between">
+          <div className="flex flex-col">
+            <span className="text-[9px] font-bold font-mono text-gray-400 uppercase tracking-wider">
+              Highlight Utama
+            </span>
+            <span className="text-xs font-semibold text-gray-700 truncate max-w-[180px] break-all">
+              {destination?.highlight}
+            </span>
+          </div>
+          <span className="text-xs text-blue-500 font-semibold group-hover:translate-x-1 transition-transform duration-300">
+            →
+          </span>
+        </div>
+      </div>
+
+      {/* Bagian Review */}
+      <ReviewSection
+        destinationId={destination?.id}
+        destinationName={destination?.name}
+      />
     </div>
   );
 }

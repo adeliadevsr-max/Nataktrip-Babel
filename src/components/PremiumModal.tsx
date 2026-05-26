@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { X, Sparkles, Check, CreditCard, Gift, ShieldAlert, User, Mail, Lock, ShieldCheck } from 'lucide-react';
+
+const API_URL = 'http://localhost:5000/api';
 
 interface PremiumModalProps {
   isOpen: boolean;
@@ -22,31 +24,12 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   
-  // Promo (Trial fallback)
+  // Promo
   const [promoCode, setPromoCode] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-
-  // Local state for registered simulation accounts
-  const [registeredUsers, setRegisteredUsers] = useState<{name: string, email: string, password: string}[]>(() => {
-    const saved = localStorage.getItem('localtrip_registered_users');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // ignore
-      }
-    }
-    // Default account to make it super easy for evaluation/play
-    return [{ name: 'Adelia Dev', email: 'adelia@travel.com', password: 'password123' }];
-  });
-
-  // Sync users to local storage so they stay persisted
-  useEffect(() => {
-    localStorage.setItem('localtrip_registered_users', JSON.stringify(registeredUsers));
-  }, [registeredUsers]);
 
   if (!isOpen) return null;
 
@@ -65,7 +48,6 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
       setSuccessMsg('Kupon berhasil diklaim! Mengaktifkan Premium Gratis...');
       setTimeout(() => {
         setIsSubmitting(false);
-        // Save current session user as anonymous premium
         localStorage.setItem('localtrip_current_user', JSON.stringify({ name: 'Pengguna Kupon', email: 'coupon@babel.com' }));
         onConfirmUpgrade();
         setSuccessMsg('');
@@ -75,12 +57,12 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
     }
   };
 
-  const handleRegisterAndPay = (e: React.FormEvent) => {
+  // ✅ REGISTER — terhubung ke backend API
+  const handleRegisterAndPay = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Validations
     if (!name.trim()) {
       setErrorMsg('Harap masukkan Nama Lengkap Anda.');
       return;
@@ -108,41 +90,49 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      // Check if email already exists
-      const emailExists = registeredUsers.some(u => u.email.toLowerCase() === email.trim().toLowerCase());
-      if (emailExists) {
-        setErrorMsg('Email ini telah terdaftar! Silakan login di tab "Masuk dengan Akun" atau gunakan email lain.');
+    try {
+      const res = await fetch(`${API_URL}/users/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: name.trim(), email: email.trim(), password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setErrorMsg(data.message || 'Registrasi gagal. Coba lagi.');
         setIsSubmitting(false);
         return;
       }
 
-      // Add to registered list
-      const newUser = { name: name.trim(), email: email.trim().toLowerCase(), password };
-      const updatedList = [...registeredUsers, newUser];
-      setRegisteredUsers(updatedList);
+      // ✅ Simpan token & data user ke localStorage
+      localStorage.setItem('nataktrip_token', data.token);
+      localStorage.setItem('localtrip_current_user', JSON.stringify({ name: data.data.username, email: data.data.email, id: data.data.id, status: data.data.status }));
 
-      // Save session
-      localStorage.setItem('localtrip_current_user', JSON.stringify({ name: newUser.name, email: newUser.email }));
-      
+      // Upgrade ke Premium setelah "pembayaran" simulasi
+      await fetch(`${API_URL}/users/${data.data.id}/upgrade`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
       setIsSubmitting(false);
-      setSuccessMsg(`Pendaftaran & Pembayaran Berhasil! Selamat datang, ${newUser.name}.`);
-      
+      setSuccessMsg(`Pendaftaran & Pembayaran Berhasil! Selamat datang, ${data.data.username}.`);
+
       setTimeout(() => {
         onConfirmUpgrade();
         setSuccessMsg('');
-        // Clean fields
-        setName('');
-        setEmail('');
-        setPassword('');
-        setCardNumber('');
-        setExpiry('');
-        setCvv('');
+        setName(''); setEmail(''); setPassword('');
+        setCardNumber(''); setExpiry(''); setCvv('');
       }, 1200);
-    }, 1500);
+
+    } catch (err) {
+      setIsSubmitting(false);
+      setErrorMsg('Tidak dapat terhubung ke server. Pastikan backend berjalan.');
+    }
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  // ✅ LOGIN — terhubung ke backend API
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -158,33 +148,43 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      const matched = registeredUsers.find(
-        u => u.email.toLowerCase() === loginEmail.trim().toLowerCase() && u.password === loginPassword
-      );
+    try {
+      const res = await fetch(`${API_URL}/users/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
+      });
 
-      if (matched) {
-        // Save session
-        localStorage.setItem('localtrip_current_user', JSON.stringify({ name: matched.name, email: matched.email }));
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setErrorMsg(data.message || 'Email atau password salah.');
         setIsSubmitting(false);
-        setSuccessMsg(`Login Berhasil! Selamat datang kembali, ${matched.name}.`);
-        
-        setTimeout(() => {
-          onConfirmUpgrade();
-          setSuccessMsg('');
-          setLoginEmail('');
-          setLoginPassword('');
-        }, 1200);
-      } else {
-        setIsSubmitting(false);
-        setErrorMsg('Email atau sandi salah! Coba gunakan akun default (adelia@travel.com / password123) atau daftarkan akun baru di tab "Daftar".');
+        return;
       }
-    }, 1200);
+
+      // ✅ Simpan token & data user ke localStorage
+      localStorage.setItem('nataktrip_token', data.token);
+      localStorage.setItem('localtrip_current_user', JSON.stringify({ name: data.data.username, email: data.data.email, id: data.data.id, status: data.data.status }));
+
+      setIsSubmitting(false);
+      setSuccessMsg(`Login Berhasil! Selamat datang kembali, ${data.data.username}.`);
+
+      setTimeout(() => {
+        onConfirmUpgrade();
+        setSuccessMsg('');
+        setLoginEmail('');
+        setLoginPassword('');
+      }, 1200);
+
+    } catch (err) {
+      setIsSubmitting(false);
+      setErrorMsg('Tidak dapat terhubung ke server. Pastikan backend berjalan.');
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs transition-all duration-300 overflow-y-auto">
-      {/* Outer Card */}
       <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-gray-150 flex flex-col overflow-hidden max-h-[92vh]">
         
         {/* Banner/Header */}
@@ -222,7 +222,7 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
         {/* Scrollable Container */}
         <div className="p-5 flex-1 overflow-y-auto space-y-4">
           
-          {/* Benefits Bullet Points */}
+          {/* Benefits */}
           <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
             <span className="text-[9.5px] font-bold font-mono text-slate-400 uppercase tracking-wider block mb-2">
               Keuntungan Akses VIP Premium:
@@ -239,48 +239,35 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
             </ul>
           </div>
 
-          {/* Interactive Toggle Tabs for Register & Pay vs Login */}
+          {/* Tabs */}
           <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
             <button
               type="button"
-              onClick={() => {
-                setActiveTab('register');
-                setErrorMsg('');
-                setSuccessMsg('');
-              }}
+              onClick={() => { setActiveTab('register'); setErrorMsg(''); setSuccessMsg(''); }}
               className={`py-2 text-[11.5px] font-black tracking-tight rounded-lg transition-all cursor-pointer ${
-                activeTab === 'register'
-                  ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/50'
-                  : 'text-slate-500 hover:text-slate-800'
+                activeTab === 'register' ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               📝 Daftar Baru & Aktifkan
             </button>
             <button
               type="button"
-              onClick={() => {
-                setActiveTab('login');
-                setErrorMsg('');
-                setSuccessMsg('');
-              }}
+              onClick={() => { setActiveTab('login'); setErrorMsg(''); setSuccessMsg(''); }}
               className={`py-2 text-[11.5px] font-black tracking-tight rounded-lg transition-all cursor-pointer ${
-                activeTab === 'login'
-                  ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/50'
-                  : 'text-slate-500 hover:text-slate-800'
+                activeTab === 'login' ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               🔑 Masuk dengan Akun
             </button>
           </div>
 
-          {/* ERROR & SUCCESS MESSAGES */}
+          {/* Messages */}
           {errorMsg && (
             <div className="bg-rose-50 border border-rose-100 rounded-lg p-2.5 flex items-start gap-2 text-[11px] text-rose-700 animate-pulse">
               <ShieldAlert className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
-
           {successMsg && (
             <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-2.5 flex items-start gap-2 text-[11px] text-emerald-800">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
@@ -288,7 +275,7 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
             </div>
           )}
 
-          {/* REGISTER FLOW WITH DEBIT CARD */}
+          {/* REGISTER */}
           {activeTab === 'register' && (
             <form onSubmit={handleRegisterAndPay} className="space-y-3">
               <span className="text-[10px] font-extrabold font-mono text-slate-400 uppercase tracking-widest block border-b border-dashed border-slate-200 pb-1">
@@ -297,54 +284,29 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                    Nama Lengkap
-                  </label>
+                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Nama Lengkap</label>
                   <div className="relative">
                     <User className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Contoh: Adelia Sari"
-                      required
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium"
-                    />
+                    <input type="text" placeholder="Contoh: Adelia Sari" required value={name} onChange={(e) => setName(e.target.value)}
+                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium" />
                   </div>
                 </div>
-
                 <div>
-                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                    Email Aktif
-                  </label>
+                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Email Aktif</label>
                   <div className="relative">
                     <Mail className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="email"
-                      placeholder="adelia@travel.com"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium"
-                    />
+                    <input type="email" placeholder="adelia@travel.com" required value={email} onChange={(e) => setEmail(e.target.value)}
+                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium" />
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                  Sandi Baru (Min. 6 Karakter)
-                </label>
+                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Sandi Baru (Min. 6 Karakter)</label>
                 <div className="relative">
                   <Lock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono tracking-widest"
-                  />
+                  <input type="password" placeholder="••••••••" required value={password} onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono tracking-widest" />
                 </div>
               </div>
 
@@ -354,173 +316,96 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
 
               <div className="space-y-2.5">
                 <div>
-                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                    Nomor Kartu Debit/Kredit
-                  </label>
+                  <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Nomor Kartu Debit/Kredit</label>
                   <div className="relative">
                     <CreditCard className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      maxLength={19}
-                      placeholder="4111 2222 3333 4444"
-                      required
-                      value={cardNumber}
+                    <input type="text" maxLength={19} placeholder="4111 2222 3333 4444" required value={cardNumber}
                       onChange={(e) => setCardNumber(e.target.value.replace(/\D/g, '').replace(/(\d{4})/g, '$1 ').trim())}
-                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium"
-                    />
+                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium" />
                   </div>
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                      Masa Berlaku
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={5}
-                      placeholder="MM/YY"
-                      required
-                      value={expiry}
+                    <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Masa Berlaku</label>
+                    <input type="text" maxLength={5} placeholder="MM/YY" required value={expiry}
                       onChange={(e) => setExpiry(e.target.value.replace(/[^\d/]/g, ''))}
-                      className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium"
-                    />
+                      className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium" />
                   </div>
                   <div>
-                    <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                      CVV / CVC
-                    </label>
-                    <input
-                      type="password"
-                      maxLength={3}
-                      placeholder="•••"
-                      required
-                      value={cvv}
+                    <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">CVV / CVC</label>
+                    <input type="password" maxLength={3} placeholder="•••" required value={cvv}
                       onChange={(e) => setCvv(e.target.value.replace(/\D/g, ''))}
-                      className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium"
-                    />
+                      className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono font-medium" />
                   </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="pt-3 flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="w-full sm:w-1/3 bg-slate-50 hover:bg-slate-150 border border-slate-200 text-slate-700 text-xs font-bold py-2 rounded-xl cursor-pointer text-center"
-                >
+                <button type="button" onClick={onClose}
+                  className="w-full sm:w-1/3 bg-slate-50 hover:bg-slate-150 border border-slate-200 text-slate-700 text-xs font-bold py-2 rounded-xl cursor-pointer text-center">
                   Batal
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full sm:w-2/3 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-600 text-white text-xs font-black py-2 rounded-xl cursor-pointer text-center flex justify-center items-center shadow-md transition-all uppercase tracking-wide"
-                >
+                <button type="submit" disabled={isSubmitting}
+                  className="w-full sm:w-2/3 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-600 text-white text-xs font-black py-2 rounded-xl cursor-pointer text-center flex justify-center items-center shadow-md transition-all uppercase tracking-wide">
                   {isSubmitting ? 'Mendaftarkan Akun...' : 'Daftar & Bayar Sekarang'}
                 </button>
               </div>
 
               <div className="text-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('login');
-                    setErrorMsg('');
-                    setSuccessMsg('');
-                  }}
-                  className="text-[10.5px] font-bold text-indigo-600 hover:underline cursor-pointer"
-                >
+                <button type="button" onClick={() => { setActiveTab('login'); setErrorMsg(''); setSuccessMsg(''); }}
+                  className="text-[10.5px] font-bold text-indigo-600 hover:underline cursor-pointer">
                   Sudah punya akun? Masuk/Login di sini &rarr;
                 </button>
               </div>
             </form>
           )}
 
-          {/* LOGIN FLOW FOR EXISTING USERS */}
+          {/* LOGIN */}
           {activeTab === 'login' && (
             <form onSubmit={handleLogin} className="space-y-4 pt-1">
               <span className="text-[10px] font-extrabold font-mono text-slate-400 uppercase tracking-widest block border-b border-dashed border-slate-200 pb-1">
                 Gunakan Akun Terdaftar untuk Mengaktifkan Akses
               </span>
 
-              <p className="text-[10.5px] text-slate-500 bg-slate-50 border border-slate-200/50 rounded-lg p-2 leading-relaxed">
-                💡 Untuk evaluasi cepat, Anda dapat menggunakan akun terdaftar bawaan:
-                <br />
-                <strong className="text-slate-800">Email:</strong> <code className="text-indigo-600 font-bold font-mono">adelia@travel.com</code>
-                <br />
-                <strong className="text-slate-800">Password:</strong> <code className="text-indigo-600 font-bold font-mono">password123</code>
-              </p>
-
               <div>
-                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                  Email Akun
-                </label>
+                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Email Akun</label>
                 <div className="relative">
                   <Mail className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="email"
-                    placeholder="Masukkan email terdaftar"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium"
-                  />
+                  <input type="email" placeholder="Masukkan email terdaftar" required value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)}
+                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-medium" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">
-                  Kata Sandi
-                </label>
+                <label className="block text-[9.5px] uppercase font-bold text-slate-400 tracking-wider mb-1">Kata Sandi</label>
                 <div className="relative">
                   <Lock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono tracking-widest"
-                  />
+                  <input type="password" placeholder="••••••••" required value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)}
+                    className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 font-mono tracking-widest" />
                 </div>
               </div>
 
-              {/* Action Buttons */}
               <div className="pt-2 flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="w-full sm:w-1/3 bg-slate-100 hover:bg-slate-150 border border-slate-200 text-slate-700 text-xs font-bold py-2 rounded-xl cursor-pointer text-center"
-                >
+                <button type="button" onClick={onClose}
+                  className="w-full sm:w-1/3 bg-slate-100 hover:bg-slate-150 border border-slate-200 text-slate-700 text-xs font-bold py-2 rounded-xl cursor-pointer text-center">
                   Batal
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full sm:w-2/3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-xs font-black py-2 rounded-xl cursor-pointer text-center flex justify-center items-center shadow-md transition-all uppercase tracking-wide"
-                >
+                <button type="submit" disabled={isSubmitting}
+                  className="w-full sm:w-2/3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-xs font-black py-2 rounded-xl cursor-pointer text-center flex justify-center items-center shadow-md transition-all uppercase tracking-wide">
                   {isSubmitting ? 'Memverifikasi...' : 'Masuk & Aktifkan Premium'}
                 </button>
               </div>
 
               <div className="text-center border-t border-slate-100 pt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('register');
-                    setErrorMsg('');
-                    setSuccessMsg('');
-                  }}
-                  className="text-[10.5px] font-bold text-indigo-600 hover:underline cursor-pointer"
-                >
+                <button type="button" onClick={() => { setActiveTab('register'); setErrorMsg(''); setSuccessMsg(''); }}
+                  className="text-[10.5px] font-bold text-indigo-600 hover:underline cursor-pointer">
                   &larr; Belum punya akun? Registrasi & Langganan Baru di sini
                 </button>
               </div>
             </form>
           )}
 
-          {/* Fallback Promo Code Trial option */}
+          {/* Promo Code */}
           <div className="border-t border-slate-150 pt-3.5">
             <div className="bg-indigo-50/40 border border-indigo-100/70 rounded-xl p-2.5">
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-900 mb-1">
@@ -531,19 +416,10 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
                 Ketik kupon <span className="font-extrabold underline decoration-wavy">BABELBEBAS</span> untuk bypass simulasi pembayaran secara gratis.
               </p>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="KUMPULKAN KODE"
-                  value={promoCode}
-                  onChange={(e) => setPromoCode(e.target.value)}
-                  className="flex-1 bg-white border border-slate-200 uppercase rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none focus:border-indigo-500 font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={handleApplyPromo}
-                  disabled={isSubmitting}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold px-3 py-1 rounded-lg transition-all cursor-pointer disabled:opacity-50"
-                >
+                <input type="text" placeholder="KUMPULKAN KODE" value={promoCode} onChange={(e) => setPromoCode(e.target.value)}
+                  className="flex-1 bg-white border border-slate-200 uppercase rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none focus:border-indigo-500 font-mono" />
+                <button type="button" onClick={handleApplyPromo} disabled={isSubmitting}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold px-3 py-1 rounded-lg transition-all cursor-pointer disabled:opacity-50">
                   Klaim
                 </button>
               </div>

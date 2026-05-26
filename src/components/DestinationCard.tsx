@@ -35,6 +35,14 @@ export default function DestinationCard({
     }
   };
 
+  // ✅ FIX 1: Helper function untuk format rating dengan aman
+  // Mencegah error jika rating bukan number, null, atau undefined
+  const formatRating = (rating: any): string => {
+    const num = Number(rating);
+    if (isNaN(num)) return 'N/A';
+    return num.toFixed(1);
+  };
+
   const theme = getCategoryTheme();
 
   if (isLocked) {
@@ -110,9 +118,10 @@ export default function DestinationCard({
               </button>
 
               {/* Rating */}
+              {/* ✅ FIX 2: Pakai formatRating() yang aman, bukan .toFixed() langsung */}
               <div className="flex items-center gap-1 text-xs font-semibold text-gray-800 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded-md">
                 <Star className="w-3.5 h-3.5 fill-amber-400 stroke-amber-400" />
-                <span className="font-mono">{destination.rating.toFixed(1)}</span>
+                <span className="font-mono">{formatRating(destination.rating)}</span>
               </div>
             </div>
           </div>
