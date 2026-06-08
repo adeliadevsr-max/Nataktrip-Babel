@@ -1,40 +1,69 @@
 import { useState, useEffect } from 'react';
-import { Search, Sparkles, Compass, Heart, Check, Trash2 } from 'lucide-react';
-import { IslandType, UserStatus, CategoryType, Destination } from './types';
+import { Check, Sparkles } from 'lucide-react';
+import { IslandType, UserStatus, Destination } from './types';
 import Header from './components/Header';
-import SubTabs from './components/SubTabs';
-import CategorySection from './components/CategorySection';
+import Sidebar from './components/Sidebar';
+import MainLayout from './components/MainLayout';
 import PremiumModal from './components/PremiumModal';
-import BabelMap from './components/BabelMap';
-import TripStats from './components/TripStats';
-import AccessLevelGuide from './components/AccessLevelGuide';
-import PremiumItineraryPlanner from './components/PremiumItineraryPlanner';
-import BabelAIBot from './components/BabelAIBot';
+import PremiumTravelForm from './components/PremiumTravelForm';
+import AITravelPlanResult from './components/AITravelPlanResult';
+import FreeLandingPreview from './components/FreeLandingPreview';
+import PremiumExploreGallery from './components/PremiumExploreGallery';
+import { DESTINATIONS } from './data';
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; email: string; status: UserStatus } | null>(() => {
+    const saved = localStorage.getItem('localtrip_current_user');
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return null;
+    }
+  });
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('nataktrip_token'));
   const [userStatus, setUserStatus] = useState<UserStatus>(() => {
-    const saved = localStorage.getItem('localtrip_user_status');
-    return (saved === 'Premium' || saved === 'Free') ? saved : 'Free';
+    const saved = localStorage.getItem('localtrip_current_user');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed?.status === 'Premium' ? 'Premium' : 'Free';
+      } catch {
+        return 'Free';
+      }
+    }
+    return 'Free';
   });
   const [activeIsland, setActiveIsland] = useState<IslandType>('Bangka');
-  const [searchQuery, setSearchQuery] = useState('');
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>('planner');
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('localtrip_favorites');
     return saved ? JSON.parse(saved) : [];
   });
 
-  // === DATA DARI API (menggantikan import DESTINATIONS dari data.ts) ===
-  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>(() => DESTINATIONS);
   const [loadingData, setLoadingData] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [premiumRecommendations, setPremiumRecommendations] = useState<Destination[]>([]);
+
+  // === STATE UNTUK TRAVEL PLAN ===
+  const [travelPlanGenerated, setTravelPlanGenerated] = useState(false);
+  const [planParams, setPlanParams] = useState<{
+    groupSize: number;
+    budget: number;
+    durationDays: number;
+    island: IslandType;
+    selectedCategories: string[];
+  } | null>(null);
+  const [selectedPlanDestinations, setSelectedPlanDestinations] = useState<Destination[]>([]);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
   useEffect(() => {
     fetch('http://localhost:5000/api/destinations')
       .then(res => res.json())
       .then(json => {
-        // api.js mengembalikan { success: true, data: [...] }
         const data = Array.isArray(json) ? json : (json.data ?? []);
         setDestinations(data);
         setLoadingData(false);
@@ -50,14 +79,37 @@ export default function App() {
     localStorage.setItem('localtrip_user_status', userStatus);
   }, [userStatus]);
 
+  const API_URL = 'http://localhost:5000/api';
+
+  const handleAuthUpdate = () => {
+    const saved = localStorage.getItem('localtrip_current_user');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setCurrentUser(parsed);
+        setUserStatus(parsed.status === 'Premium' ? 'Premium' : 'Free');
+        setAuthToken(localStorage.getItem('nataktrip_token'));
+        return;
+      } catch {
+        // ignore
+      }
+    }
+    setCurrentUser(null);
+    setUserStatus('Free');
+    setAuthToken(null);
+  };
+
   useEffect(() => {
     localStorage.setItem('localtrip_favorites', JSON.stringify(favorites));
   }, [favorites]);
 
+  useEffect(() => {
+    handleAuthUpdate();
+  }, []);
+
   const handleOpenUpgrade = () => setIsUpgradeModalOpen(true);
   const handleCloseUpgrade = () => setIsUpgradeModalOpen(false);
   const handleConfirmUpgrade = () => {
-    setUserStatus('Premium');
     setIsUpgradeModalOpen(false);
     setShowSuccessBanner(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -65,209 +117,182 @@ export default function App() {
   const handleDowngrade = () => {
     setUserStatus('Free');
     setShowSuccessBanner(false);
+    setCurrentUser(null);
+    setAuthToken(null);
+    setFavorites([]);
+    setPremiumRecommendations([]);
+    setTravelPlanGenerated(false);
+    localStorage.removeItem('localtrip_current_user');
+    localStorage.removeItem('nataktrip_token');
+    localStorage.removeItem('localtrip_favorites');
   };
-  const handleToggleFavorite = (id: string) => {
-    setFavorites((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+
+  // === GENERATE TRAVEL PLAN ===
+  const handleGenerateTravelPlan = (params: {
+    groupSize: number;
+    budget: number;
+    durationDays: number;
+    island: IslandType;
+    selectedCategories: string[];
+  }) => {
+    setIsGeneratingPlan(true);
+    
+    // Simulate delay for UX
+    setTimeout(() => {
+      const available = destinations.filter(
+        (dest) =>
+          dest.island === params.island &&
+          params.selectedCategories.includes(dest.category)
+      );
+
+      const sorted = [...available].sort((a, b) => b.rating - a.rating);
+      const maxStops = Math.max(2, Math.min(8, params.durationDays * 3));
+
+      const categoryQuota = {
+        Pantai: Math.ceil(maxStops * 0.5),
+        Restoran: Math.max(1, Math.ceil(maxStops * 0.3)),
+        Cafe: Math.max(1, Math.ceil(maxStops * 0.2)),
+      };
+      const usedCategories = { Pantai: 0, Restoran: 0, Cafe: 0 };
+      const selected: Destination[] = [];
+
+      // First pass: category quota
+      for (const dest of sorted) {
+        if (selected.length >= maxStops) break;
+        if (
+          usedCategories[dest.category] <
+          categoryQuota[dest.category as keyof typeof categoryQuota]
+        ) {
+          selected.push(dest);
+          usedCategories[dest.category]++;
+        }
+      }
+
+      // Second pass: fill remaining
+      const remaining = sorted
+        .filter((dest) => !selected.includes(dest))
+        .slice(0, maxStops - selected.length);
+      remaining.forEach((dest) => selected.push(dest));
+
+      setPlanParams(params);
+      setSelectedPlanDestinations(selected);
+      setTravelPlanGenerated(true);
+      setIsGeneratingPlan(false);
+
+      // Scroll to result
+      setTimeout(() => {
+        const resultElement = document.querySelector('[data-travel-plan-result]') as HTMLElement | null;
+        if (resultElement) {
+          window.scrollTo({
+            top: resultElement.offsetTop - 80,
+            behavior: 'smooth',
+          });
+        }
+      }, 100);
+    }, 1500);
   };
-  const handleClearFavorites = () => setFavorites([]);
-
-  const islandDestinations = destinations.filter((dest) => {
-    const matchesIsland = dest.island === activeIsland;
-    const matchesSearch =
-      dest.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dest.location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dest.category?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dest.subDistrict?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dest.highlight?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesIsland && matchesSearch;
-  });
-
-  const categories: CategoryType[] = ['Pantai', 'Restoran', 'Cafe'];
-  const totalSpots = destinations.filter(d => d.island === activeIsland).length;
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans antialiased selection:bg-blue-100 selection:text-blue-900 flex flex-col">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased selection:bg-sky-100 selection:text-sky-900 flex flex-col">
+      {/* Shared Header */}
       <Header status={userStatus} onOpenUpgrade={handleOpenUpgrade} onDowngrade={handleDowngrade} />
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 md:py-10 space-y-6">
-
-        {showSuccessBanner && (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center text-white shrink-0">
-                <Check className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h4 className="font-bold text-emerald-900 text-sm sm:text-base leading-snug">🎉 Akses Premium Berhasil Diaktifkan!</h4>
-                <p className="text-xs text-emerald-600 mt-0.5">Seluruh destinasi wisata di Bangka & Belitung kini terbuka penuh.</p>
-              </div>
-            </div>
-            <button onClick={() => setShowSuccessBanner(false)} className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap">
-              Mulai Eksplorasi
-            </button>
-          </div>
+      {/* Main Core Container */}
+      <div className={`flex-1 overflow-hidden ${userStatus === 'Premium' ? 'grid grid-cols-1 md:grid-cols-[280px_1fr]' : 'block'}`}>
+        {/* Sidebar (Only shown if Premium) */}
+        {userStatus === 'Premium' && (
+          <Sidebar
+            activeSection={activeSection}
+            onSectionChange={setActiveSection}
+            userStatus={userStatus}
+            currentUser={currentUser ? { id: currentUser.id, name: currentUser.name, email: currentUser.email } : null}
+            onOpenUpgrade={handleOpenUpgrade}
+            onDowngrade={handleDowngrade}
+          />
         )}
 
-        <div className="text-center max-w-2xl mx-auto space-y-4 pt-2">
-          <div className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold tracking-tight">
-            <Compass className="w-3.5 h-3.5 text-blue-500" />
-            <span>Curated Local Travel Guide</span>
-          </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl">Panduan Trip Terbaik di Babel</h2>
-          <p className="text-sm text-gray-500 leading-relaxed font-normal">
-            Selamat datang di <strong className="text-gray-900 font-semibold">Nataktrip Babel</strong>. Kami merangkum rekomendasi destinasi Pantai eksotis, wisata kuliner Restoran, dan Cafe estetik yang paling disukai warga lokal di Kepulauan Bangka Belitung.
-          </p>
-        </div>
-
-        <TripStats />
-        <AccessLevelGuide userStatus={userStatus} onOpenUpgrade={handleOpenUpgrade} onDowngrade={handleDowngrade} />
-        <BabelMap activeIsland={activeIsland} onChangeIsland={(island) => { setActiveIsland(island); setSearchQuery(''); }} />
-        <SubTabs activeIsland={activeIsland} onChangeIsland={(island) => { setActiveIsland(island); setSearchQuery(''); }} />
-
-        <div className="w-full max-w-xl mx-auto space-y-3.5">
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl p-1.5 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50/50 transition-all">
-            <div className="pl-3 text-gray-400 shrink-0"><Search className="w-4 h-4" /></div>
-            <input
-              type="text"
-              placeholder={`Cari "${activeIsland === 'Bangka' ? 'Lempah Kuning, Parai...' : 'Laskar Pelangi, Kong Djie...'}"...`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-0 outline-none text-xs sm:text-sm py-1.5 placeholder-gray-400 font-sans pr-3 font-medium text-gray-800"
-            />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="text-[10px] text-gray-400 hover:text-gray-900 px-2 font-mono h-full">Clear</button>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
-            <span className="text-[10px] font-bold font-mono text-gray-400 uppercase tracking-wider mr-1">Rekomendasi Cari:</span>
-            {(activeIsland === 'Bangka'
-              ? ['Parai', 'Lempah Kuning', 'Otak-Otak', 'Tung Tau', 'Matras']
-              : ['Tanjung Tinggi', 'Laskar Pelangi', 'Kong Djie', 'Gangan', 'Manggar']
-            ).map((tag) => (
-              <button key={tag} onClick={() => setSearchQuery(tag)}
-                className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-all cursor-pointer ${searchQuery.toLowerCase() === tag.toLowerCase() ? 'bg-blue-600 text-white border-blue-600 font-semibold' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}>
-                #{tag}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {favorites.length > 0 && (
-          <div className="w-full bg-slate-50 border border-gray-150 rounded-2xl p-5 space-y-4 relative overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-150">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-red-50 text-red-500 flex items-center justify-center">
-                  <Heart className="w-4 h-4 fill-current animate-pulse" />
+        {/* Content Layout */}
+        <MainLayout>
+          {showSuccessBanner && (
+            <div className="mb-6 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs max-w-[950px] mx-auto">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-emerald-500 rounded-full flex items-center justify-center text-white shrink-0">
+                  <Check className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-gray-800">📋 Tempat Tersimpan Anda ({favorites.length} Lokasi)</h3>
-                  <p className="text-[11px] text-gray-400">Daftar destinasi pilihan Anda yang siap disinkronkan ke jadwal perjalanan below.</p>
+                  <h4 className="font-bold text-slate-800 text-sm leading-snug">🎉 Akses Premium VIP Aktif!</h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Seluruh destinasi wisata, fitur planner, dan AI travel bot kini terbuka penuh.</p>
                 </div>
               </div>
-              <button onClick={handleClearFavorites} className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-red-600 transition-colors cursor-pointer">
-                <Trash2 className="w-3.5 h-3.5" /><span>Kosongkan Semua</span>
+              <button onClick={() => setShowSuccessBanner(false)} className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap">
+                Lanjut
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {destinations.filter(item => favorites.includes(item.id)).map((dest) => (
-                <div key={dest.id} className="bg-white border border-gray-100 rounded-xl overflow-hidden flex flex-col justify-between hover:shadow-subtle transition-all">
-                  {dest.imageUrl && (
-                    <div className="w-full h-20 bg-gray-100 overflow-hidden">
-                      <img src={dest.imageUrl} alt={dest.name} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+          )}
+
+          {/* Conditional Tier Content */}
+          {userStatus === 'Premium' ? (
+            <div className="space-y-10">
+              {/* === EXPLORE GALLERY (Dashboard / default view) === */}
+              {(activeSection === 'dashboard' || activeSection === 'planner') && (
+                <>
+                  {/* Visual Destination Gallery */}
+                  <PremiumExploreGallery destinations={destinations} />
+
+                  {/* Divider */}
+                  <div className="flex items-center gap-4 max-w-[950px] mx-auto">
+                    <div className="flex-1 h-px bg-slate-200" />
+                    <span className="text-[10px] font-black text-slate-400 font-mono uppercase tracking-widest px-3 py-1.5 bg-slate-100 rounded-full">
+                      ✨ AI Trip Planner
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200" />
+                  </div>
+
+                  {/* Premium Planner */}
+                  <PremiumTravelForm
+                    activeIsland={activeIsland}
+                    destinations={destinations}
+                    onGenerate={handleGenerateTravelPlan}
+                    isLoading={isGeneratingPlan}
+                  />
+
+                  {/* AI Travel Result */}
+                  {travelPlanGenerated && planParams ? (
+                    <div data-travel-plan-result className="pt-6 border-t border-slate-200/60">
+                      <AITravelPlanResult
+                        groupSize={planParams.groupSize}
+                        budget={planParams.budget}
+                        durationDays={planParams.durationDays}
+                        island={planParams.island}
+                        selectedDestinations={selectedPlanDestinations}
+                        selectedCategories={planParams.selectedCategories}
+                      />
+                    </div>
+                  ) : (
+                    /* Empty state / placeholder */
+                    <div className="bg-white border border-dashed border-slate-200 rounded-[24px] p-10 text-center text-slate-500 max-w-[950px] mx-auto shadow-xs select-none">
+                      <div className="text-3xl mb-2.5">🗺️</div>
+                      <p className="text-xs font-black text-slate-700">Belum ada itinerary yang dibuat.</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-bold font-mono">Atur perjalanan lalu tekan Generate.</p>
                     </div>
                   )}
-                  <div className="p-3 flex flex-col justify-between flex-1">
-                    <div>
-                      <span className="text-[9px] font-bold font-mono tracking-wider text-slate-400 uppercase">{dest.category}</span>
-                      <h5 className="text-xs font-bold text-gray-800 line-clamp-1">{dest.name}</h5>
-                      <p className="text-[10px] text-gray-400 mt-0.5 truncate">{dest.location}</p>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-gray-50 pt-2 mt-2">
-                      <span className="text-[10px] font-bold text-amber-500">⭐ {dest.rating}</span>
-                      <button onClick={() => handleToggleFavorite(dest.id)} className="text-[10px] font-semibold text-red-500 hover:underline cursor-pointer">Hapus</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                </>
+              )}
             </div>
-          </div>
-        )}
+          ) : (
+            /* Free Landing View */
+            <FreeLandingPreview onOpenUpgrade={handleOpenUpgrade} />
+          )}
+        </MainLayout>
+      </div>
 
-        <PremiumItineraryPlanner userStatus={userStatus} favorites={favorites} onToggleFavorite={handleToggleFavorite} onOpenUpgrade={handleOpenUpgrade} activeIsland={activeIsland} />
-        <BabelAIBot userStatus={userStatus} onOpenUpgrade={handleOpenUpgrade} favorites={favorites} onToggleFavorite={handleToggleFavorite} activeIsland={activeIsland} />
-
-        <div className="flex items-center justify-between text-xs text-gray-400 w-full max-w-7xl mx-auto px-1 pt-4">
-          <div className="flex items-center gap-1.5 font-medium">
-            <span>Menampilkan daerah:</span>
-            <span className="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded-sm">Pulau {activeIsland}</span>
-          </div>
-          <p className="font-mono text-[11px] font-bold">
-            {loadingData ? <span className="text-gray-400">Memuat data...</span>
-              : fetchError ? <span className="text-red-500">Error koneksi API</span>
-              : userStatus === 'Premium'
-                ? <span className="text-blue-600">Akses Premium Terbuka ({totalSpots}/{totalSpots} rekomendasi)</span>
-                : <span className="text-gray-500">Akses Gratis (6/{totalSpots} rekomendasi tampil)</span>}
-          </p>
-        </div>
-
-        {loadingData ? (
-          <div className="text-center py-12 text-sm text-gray-400">Memuat destinasi dari server...</div>
-        ) : fetchError ? (
-          <div className="text-center py-12 px-4 border border-dashed border-red-200 rounded-2xl max-w-md mx-auto">
-            <p className="text-sm font-semibold text-red-600">Koneksi API Gagal</p>
-            <p className="text-xs text-gray-400 mt-1">{fetchError}</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {islandDestinations.length === 0 ? (
-              <div className="text-center py-12 px-4 border border-dashed border-gray-150 rounded-2xl max-w-md mx-auto">
-                <p className="text-sm font-semibold text-gray-700">Tidak ada tempat wisata ditemukan</p>
-                <p className="text-xs text-gray-400 mt-1">Coba cari dengan kata kunci lain seperti nama pantai, kecamatan, kuliner dsb.</p>
-                <button onClick={() => setSearchQuery('')} className="mt-3.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold px-3 py-1.5 rounded-lg active:scale-95 transition-all cursor-pointer">
-                  Reset Pencarian
-                </button>
-              </div>
-            ) : (
-              categories.map((cat) => (
-                <CategorySection key={cat} category={cat} destinations={islandDestinations} userStatus={userStatus} onOpenUpgrade={handleOpenUpgrade} favorites={favorites} onToggleFavorite={handleToggleFavorite} />
-              ))
-            )}
-          </div>
-        )}
-
-        {userStatus === 'Free' && !loadingData && !fetchError && (
-          <div className="bg-neutral-950 text-white rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden mt-10">
-            <div className="absolute right-0 top-0 w-1/2 h-full opacity-10 bg-gradient-to-l from-blue-500 to-transparent pointer-events-none" />
-            <div className="space-y-2 z-10 text-center md:text-left">
-              <div className="inline-flex items-center gap-1 bg-yellow-400/20 text-yellow-300 border border-yellow-400/30 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase">
-                <Sparkles className="w-3.5 h-3.5 fill-yellow-400 text-yellow-500" />
-                <span>Rekomendasi Premium Terkunci</span>
-              </div>
-              <h3 className="text-xl md:text-2xl font-black tracking-tight font-sans">Ingin Menjelajah Lebih Banyak Destinasi Eksotis?</h3>
-              <p className="text-xs text-gray-300 max-w-xl leading-relaxed">Upgrade ke Premium sekarang untuk membuka penuh semua rekomendasi tempat terbaik, highlight kuliner, dan panduan perjalanan.</p>
-            </div>
-            <div className="shrink-0 z-10 w-full md:w-auto">
-              <button onClick={handleOpenUpgrade} className="w-full md:w-auto flex items-center justify-center gap-1.5 bg-white text-gray-950 hover:bg-gray-100 text-xs sm:text-sm font-extrabold px-6 py-3 rounded-xl transition-all shadow-lg active:scale-95 cursor-pointer">
-                <span>Upgrade Sekarang</span>
-                <span className="text-blue-600 font-mono">→</span>
-              </button>
-            </div>
-          </div>
-        )}
-      </main>
-
-      <footer className="bg-gray-50 py-8 px-4 border-t border-gray-100 mt-16 font-mono text-[10px] sm:text-xs text-gray-400 text-center space-y-2.5 select-none">
-        <p className="font-semibold text-gray-500 font-sans">Nataktrip Babel © {new Date().getFullYear()} — Explore Bangka & Belitung</p>
-        <div className="flex items-center justify-center gap-4 text-[10px] font-medium text-gray-400">
-          <span>Responsive Layout</span><span>•</span>
-          <span>No Big Images Weight</span><span>•</span>
-          <span>Babel Guide Premium Simulator</span>
-        </div>
+      {/* Footer */}
+      <footer className="bg-white border-t border-slate-100 py-6 px-4 font-mono text-[10px] text-slate-400 text-center select-none">
+        <p>Nataktrip Babel © {new Date().getFullYear()} — Clean Minimalist AI Travel Planner</p>
       </footer>
 
-      <PremiumModal isOpen={isUpgradeModalOpen} onClose={handleCloseUpgrade} onConfirmUpgrade={handleConfirmUpgrade} />
+      {/* Upgrade Premium Modal */}
+      <PremiumModal isOpen={isUpgradeModalOpen} onClose={handleCloseUpgrade} onConfirmUpgrade={handleConfirmUpgrade} onAuthSuccess={handleAuthUpdate} />
     </div>
   );
 }

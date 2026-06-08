@@ -7,9 +7,10 @@ interface PremiumModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirmUpgrade: () => void;
+  onAuthSuccess: () => void;
 }
 
-export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: PremiumModalProps) {
+export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade, onAuthSuccess }: PremiumModalProps) {
   const [activeTab, setActiveTab] = useState<'register' | 'login'>('register');
   
   // Register Fields
@@ -41,19 +42,40 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
     'Biaya Keanggotaan super terjangkau: Hanya Rp 29.000 untuk 3 Bulan akses VIP'
   ];
 
-  const handleApplyPromo = () => {
-    if (promoCode.trim().toUpperCase() === 'BABELBEBAS' || promoCode.trim().toUpperCase() === 'DISCOUNT') {
-      setIsSubmitting(true);
-      setErrorMsg('');
-      setSuccessMsg('Kupon berhasil diklaim! Mengaktifkan Premium Gratis...');
-      setTimeout(() => {
+  const handleApplyPromo = async () => {
+    setErrorMsg('');
+    setSuccessMsg('Sedang memvalidasi kode kupon...');
+    setIsSubmitting(true);
+
+    try {
+      const res = await fetch(`${API_URL}/users/coupon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: promoCode.trim().toUpperCase() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setErrorMsg(data.message || 'Kode kupon salah! Coba gunakan kode kupon "BABELBEBAS" untuk akses demo gratis.');
+        setSuccessMsg('');
         setIsSubmitting(false);
-        localStorage.setItem('localtrip_current_user', JSON.stringify({ name: 'Pengguna Kupon', email: 'coupon@babel.com' }));
+        return;
+      }
+
+      localStorage.setItem('nataktrip_token', data.token);
+      localStorage.setItem('localtrip_current_user', JSON.stringify({ id: data.data.id, name: data.data.username, email: data.data.email, status: data.data.status }));
+
+      setIsSubmitting(false);
+      setSuccessMsg('Kupon berhasil diklaim! Premium demo telah diaktifkan.');
+      onAuthSuccess();
+      setTimeout(() => {
         onConfirmUpgrade();
         setSuccessMsg('');
+        setPromoCode('');
       }, 1200);
-    } else {
-      setErrorMsg('Kode kupon salah! Coba gunakan kode kupon "BABELBEBAS" untuk akses demo gratis.');
+    } catch (err) {
+      setErrorMsg('Tidak dapat terhubung ke server. Pastikan backend berjalan.');
+      setSuccessMsg('');
+      setIsSubmitting(false);
     }
   };
 
@@ -110,13 +132,35 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
       localStorage.setItem('localtrip_current_user', JSON.stringify({ name: data.data.username, email: data.data.email, id: data.data.id, status: data.data.status }));
 
       // Upgrade ke Premium setelah "pembayaran" simulasi
-      await fetch(`${API_URL}/users/${data.data.id}/upgrade`, {
+      const upgradeRes = await fetch(`${API_URL}/users/${data.data.id}/upgrade`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${data.token}`,
+        },
       });
+      const upgradeData = await upgradeRes.json();
+
+      if (!upgradeRes.ok || !upgradeData.success) {
+        setErrorMsg(upgradeData.message || 'Gagal mengaktifkan Premium setelah registrasi.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (upgradeData.token) {
+        localStorage.setItem('nataktrip_token', upgradeData.token);
+      }
+      const upgradedUser = {
+        name: data.data.username,
+        email: data.data.email,
+        id: data.data.id,
+        status: upgradeData.data?.status || 'Premium',
+      };
+      localStorage.setItem('localtrip_current_user', JSON.stringify(upgradedUser));
 
       setIsSubmitting(false);
       setSuccessMsg(`Pendaftaran & Pembayaran Berhasil! Selamat datang, ${data.data.username}.`);
+      onAuthSuccess();
 
       setTimeout(() => {
         onConfirmUpgrade();
@@ -169,12 +213,13 @@ export default function PremiumModal({ isOpen, onClose, onConfirmUpgrade }: Prem
 
       setIsSubmitting(false);
       setSuccessMsg(`Login Berhasil! Selamat datang kembali, ${data.data.username}.`);
+      onAuthSuccess();
 
       setTimeout(() => {
-        onConfirmUpgrade();
         setSuccessMsg('');
         setLoginEmail('');
         setLoginPassword('');
+        onClose();
       }, 1200);
 
     } catch (err) {

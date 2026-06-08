@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, Calendar, Clock, MapPin, Map, Navigation, ShieldCheck, Heart, Coffee, Utensils, Compass, Footprints } from 'lucide-react';
 import { Destination, UserStatus } from '../types';
 import { DESTINATIONS } from '../data';
 
 interface PremiumItineraryPlannerProps {
   userStatus: UserStatus;
+  currentUserId: string | null;
+  authToken: string | null;
   favorites: string[];
   onToggleFavorite: (id: string) => void;
   onOpenUpgrade: () => void;
@@ -13,6 +15,8 @@ interface PremiumItineraryPlannerProps {
 
 export default function PremiumItineraryPlanner({
   userStatus,
+  currentUserId,
+  authToken,
   favorites,
   onToggleFavorite,
   onOpenUpgrade,
@@ -20,8 +24,301 @@ export default function PremiumItineraryPlanner({
 }: PremiumItineraryPlannerProps) {
   const [plannerType, setPlannerType] = useState<'fullday' | 'halfday'>('fullday');
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [groupSize, setGroupSize] = useState<number>(2);
+  const [budget, setBudget] = useState<number>(750000);
+  const [durationDays, setDurationDays] = useState<number>(1);
+  const [tripPlanItems, setTripPlanItems] = useState<Destination[]>([]);
+  const [planSummary, setPlanSummary] = useState<string>('Pilih opsi perjalanan dan tekan tombol Rekomendasikan untuk melihat itinerary yang sesuai.');
+  const [budgetStatus, setBudgetStatus] = useState<string>('');
+  const [savedPlan, setSavedPlan] = useState<null | {
+    id: string;
+    createdAt: string;
+    title: string;
+    groupSize: number;
+    budget: number;
+    durationDays: number;
+    planSummary: string;
+    budgetStatus: string;
+    destinationIds: string[];
+    items: Destination[];
+  }>(null);
+  const [savedPlans, setSavedPlans] = useState<Array<{
+    id: number;
+    title: string;
+    created_at: string;
+    duration_days: number;
+    group_size: number;
+    budget: number;
+    summary: string;
+    budget_status: string;
+    destination_ids: string[];
+  }>>([]);
+  const [backendStatus, setBackendStatus] = useState<string>('');
+  const [toastMessage, setToastMessage] = useState<string>('');
+  const [showToast, setShowToast] = useState<boolean>(false);
+  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
+  const API_URL = 'http://localhost:5000/api';
 
   const favoritedDestinations = DESTINATIONS.filter(item => favorites.includes(item.id) && item.island === activeIsland);
+
+  const categoryEstimate = {
+    Pantai: 85000,
+    Restoran: 125000,
+    Cafe: 65000,
+  } as const;
+
+  const estimateDestinationCost = (destination: Destination) => {
+    return categoryEstimate[destination.category] || 90000;
+  };
+
+  const calculatePlan = () => {
+    const available = DESTINATIONS.filter((item) => item.island === activeIsland);
+    const maxStops = Math.max(1, Math.min(6, durationDays * 4));
+    const sorted = [...available].sort((a, b) => b.rating - a.rating);
+
+    const selected: Destination[] = [];
+    const categoryQuota = {
+      Pantai: Math.ceil(maxStops * 0.4),
+      Restoran: Math.max(1, Math.ceil(maxStops * 0.3)),
+      Cafe: Math.max(1, Math.ceil(maxStops * 0.2)),
+    };
+    const usedCategories = { Pantai: 0, Restoran: 0, Cafe: 0 };
+
+    for (const dest of sorted) {
+      if (selected.length >= maxStops) break;
+      if (usedCategories[dest.category] < categoryQuota[dest.category as keyof typeof categoryQuota]) {
+        selected.push(dest);
+        usedCategories[dest.category] += 1;
+      }
+    }
+
+    const remaining = sorted.filter((dest) => !selected.includes(dest)).slice(0, maxStops - selected.length);
+    remaining.forEach((dest) => selected.push(dest));
+
+    const costPerPerson = selected.reduce((sum, item) => sum + estimateDestinationCost(item), 0);
+    const transportCost = 80000 * durationDays;
+    const estimatedTotal = costPerPerson * groupSize + transportCost;
+
+    const budgetDiff = budget - estimatedTotal;
+    if (budgetDiff >= 0) {
+      setBudgetStatus(`Anggaran cocok. Estimasi total Rp ${estimatedTotal.toLocaleString('id-ID')} untuk ${durationDays} hari, termasuk biaya transportasi Rp ${transportCost.toLocaleString('id-ID')}.`);
+    } else {
+      setBudgetStatus(`Anggaran terlalu ketat. Perkiraan biaya Rp ${estimatedTotal.toLocaleString('id-ID')} melebihi budget Rp ${budget.toLocaleString('id-ID')} sebesar Rp ${Math.abs(budgetDiff).toLocaleString('id-ID')}. Kurangi durasi atau jumlah orang.`);
+    }
+
+    setTripPlanItems(selected);
+    setPlanSummary(`Rencana perjalanan ${durationDays} hari untuk ${groupSize} orang pada Pulau ${activeIsland}. ${selected.length} destinasi direkomendasikan berdasarkan rating, kategori, dan kesesuaian waktu.`);
+  };
+
+  const generatePlanText = () => {
+    const lines = [
+      `Rencana perjalanan ${durationDays} hari untuk ${groupSize} orang di Pulau ${activeIsland}`,
+      `Budget: Rp ${budget.toLocaleString('id-ID')}`,
+      planSummary,
+      budgetStatus,
+      '',
+      'Destinasi terpilih:',
+    ];
+    tripPlanItems.forEach((item, idx) => {
+      lines.push(`${idx + 1}. ${item.name} (${item.category}) - ${item.location}`);
+    });
+    return lines.join('\n');
+  };
+
+  const handleCopyPlan = async () => {
+    if (tripPlanItems.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(generatePlanText());
+      window.alert('Ringkasan rencana berhasil disalin ke clipboard.');
+    } catch {
+      window.alert('Salin gagal. Coba lagi atau periksa izin clipboard browser Anda.');
+    }
+  };
+
+  const handleSavePlan = () => {
+    if (tripPlanItems.length === 0) return;
+    const plan = {
+      id: `${activeIsland.toLowerCase()}-${Date.now()}`,
+      title: `Rencana ${activeIsland} - ${new Date().toLocaleDateString('id-ID')}`,
+      createdAt: new Date().toISOString(),
+      groupSize,
+      budget,
+      durationDays,
+      planSummary,
+      budgetStatus,
+      destinationIds: tripPlanItems.map((item) => item.id),
+      items: tripPlanItems,
+    };
+    localStorage.setItem(`nataktrip_saved_plan_${activeIsland}`, JSON.stringify(plan));
+    setSavedPlan(plan);
+  };
+
+  const handleClearSavedPlan = () => {
+    localStorage.removeItem(`nataktrip_saved_plan_${activeIsland}`);
+    setSavedPlan(null);
+  };
+
+  const fetchSavedPlans = async () => {
+    if (!currentUserId || !authToken) {
+      setSavedPlans([]);
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/itineraries/${currentUserId}`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSavedPlans(data.data);
+        setBackendStatus('Rencana tersimpan berhasil dimuat.');
+      } else {
+        setSavedPlans([]);
+      }
+    } catch (err) {
+      console.error('Fetch saved plans failed:', err);
+      setSavedPlans([]);
+      setBackendStatus('Gagal memuat rencana tersimpan.');
+    }
+  };
+
+  const handleSavePlanToBackend = async () => {
+    if (!currentUserId || !authToken || tripPlanItems.length === 0) {
+      const message = 'Login sebagai Premium untuk menyimpan rencana ini ke akun Anda.';
+      setBackendStatus(message);
+      setToastMessage(message);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 4000);
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/itineraries`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: currentUserId,
+          title: `Rencana ${activeIsland} - ${new Date().toLocaleDateString('id-ID')}`,
+          durationDays,
+          groupSize,
+          budget,
+          summary: planSummary,
+          budgetStatus,
+          destinationIds: tripPlanItems.map((item) => item.id),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const message = 'Rencana berhasil disimpan ke akun Anda.';
+        setBackendStatus(message);
+        setToastMessage(message);
+        setShowToast(true);
+        setShowConfirmModal(true);
+        setTimeout(() => setShowToast(false), 4000);
+        await fetchSavedPlans();
+      } else {
+        const message = data.message || 'Gagal menyimpan rencana ke backend.';
+        setBackendStatus(message);
+        setToastMessage(message);
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 4000);
+      }
+    } catch (err) {
+      console.error('Save plan to backend failed:', err);
+      const message = 'Terjadi masalah saat menyimpan rencana.';
+      setBackendStatus(message);
+      setToastMessage(message);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 4000);
+    }
+  };
+
+  const handleLoadPlanFromBackend = async (itineraryId: number) => {
+    if (!currentUserId || !authToken) return;
+    try {
+      const res = await fetch(`${API_URL}/itineraries/${currentUserId}/${itineraryId}`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const item = data.data;
+        const itemIds = Array.isArray(item.destination_ids)
+          ? item.destination_ids
+          : String(item.destination_ids || '').split(',').map((id: string) => id.trim()).filter(Boolean);
+        const mappedItems = itemIds.map((id: string) => DESTINATIONS.find((dest) => dest.id === id)).filter(Boolean) as Destination[];
+
+        setSavedPlan({
+          id: `${item.id}`,
+          title: item.title || `Rencana ${activeIsland}`,
+          createdAt: item.created_at,
+          groupSize: item.group_size,
+          budget: item.budget,
+          durationDays: item.duration_days,
+          planSummary: item.summary,
+          budgetStatus: item.budget_status,
+          destinationIds: itemIds,
+          items: mappedItems,
+        });
+        setBackendStatus('Rencana backend berhasil dimuat.');
+      } else {
+        setBackendStatus(data.message || 'Rencana tidak ditemukan.');
+      }
+    } catch (err) {
+      console.error('Load plan from backend failed:', err);
+      setBackendStatus('Gagal memuat rencana dari backend.');
+    }
+  };
+
+  const handleDeleteBackendPlan = async (itineraryId: number) => {
+    if (!currentUserId || !authToken) return;
+    try {
+      const res = await fetch(`${API_URL}/itineraries/${currentUserId}/${itineraryId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBackendStatus('Rencana backend berhasil dihapus.');
+        await fetchSavedPlans();
+      } else {
+        setBackendStatus(data.message || 'Gagal menghapus rencana.');
+      }
+    } catch (err) {
+      console.error('Delete backend plan failed:', err);
+      setBackendStatus('Terjadi masalah saat menghapus rencana.');
+    }
+  };
+
+  useEffect(() => {
+    fetchSavedPlans();
+  }, [currentUserId, authToken]);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(`nataktrip_saved_plan_${activeIsland}`);
+    if (raw) {
+      try {
+        setSavedPlan(JSON.parse(raw));
+      } catch {
+        setSavedPlan(null);
+      }
+    } else {
+      setSavedPlan(null);
+    }
+  }, [activeIsland]);
+
+  const handleGenerateTrip = () => {
+    calculatePlan();
+  };
 
   // Preset Itineraries for users when they want predefined recommended routes
   const presets = {
@@ -227,9 +524,234 @@ export default function PremiumItineraryPlanner({
             </button>
           </div>
 
+          <div className="bg-slate-900/80 border border-cyan-500/20 rounded-3xl p-5 grid gap-4 md:grid-cols-[1.2fr_0.8fr] items-start">
+            <div className="space-y-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">Rencana Premium Berdasarkan Opsi</span>
+                <h4 className="text-white text-lg font-black mt-2">Atur Grup, Budget, dan Durasi Perjalanan</h4>
+                <p className="text-[11px] text-slate-400 mt-1">Pilihan ini membantu sistem memilih destinasi terbaik yang cocok untuk jumlah orang, anggaran, dan durasi perjalanan Anda.</p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="space-y-1 text-[10px] text-slate-300">
+                  Jumlah Orang
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={groupSize}
+                    onChange={(e) => setGroupSize(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <label className="space-y-1 text-[10px] text-slate-300">
+                  Budget Total (Rp)
+                  <input
+                    type="number"
+                    min={250000}
+                    step={50000}
+                    value={budget}
+                    onChange={(e) => setBudget(Math.max(250000, Number(e.target.value) || 250000))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <label className="space-y-1 text-[10px] text-slate-300">
+                  Durasi Hari
+                  <select
+                    value={durationDays}
+                    onChange={(e) => setDurationDays(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-400"
+                  >
+                    <option value={1}>1 Hari</option>
+                    <option value={2}>2 Hari</option>
+                    <option value={3}>3 Hari</option>
+                  </select>
+                </label>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGenerateTrip}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 text-slate-950 font-bold text-sm py-3 hover:bg-cyan-300 transition-all"
+              >
+                <Map className="w-4 h-4" />
+                Rekomendasikan Rute Saya
+              </button>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-800 rounded-3xl p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Ringkasan Rencana</span>
+                <span className="text-[10px] font-semibold text-emerald-300">{durationDays} hari · {groupSize} orang</span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">{planSummary}</p>
+              <p className="text-[11px] text-cyan-200 font-semibold">{budgetStatus || 'Tekan tombol rekomendasi untuk melihat estimasi anggaran.'}</p>
+              {tripPlanItems.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500 font-bold">Destinasi Terpilih</div>
+                  <div className="grid gap-2">
+                    {tripPlanItems.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-slate-300 font-semibold">{item.category}</span>
+                          <span className="text-[10px] text-amber-300">⭐ {item.rating}</span>
+                        </div>
+                        <h5 className="text-sm font-bold text-white">{item.name}</h5>
+                        <p className="text-[10px] text-slate-500 truncate">{item.location}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={handleSavePlan}
+                      className="min-w-[170px] rounded-2xl bg-emerald-400 text-slate-950 font-bold text-xs py-2 hover:bg-emerald-300 transition-all"
+                    >
+                      Simpan Rencana
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePlanToBackend}
+                      className="min-w-[170px] rounded-2xl bg-violet-600 text-white font-bold text-xs py-2 hover:bg-violet-500 transition-all flex items-center justify-center gap-2"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Simpan ke Backend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopyPlan}
+                      className="min-w-[170px] rounded-2xl border border-cyan-500 text-cyan-200 font-bold text-xs py-2 hover:bg-slate-800 transition-all"
+                    >
+                      Salin Ringkasan
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {activePreset && (
             <div className="bg-emerald-500/20 border border-emerald-500/30 rounded-xl p-3 text-xs text-emerald-200 font-bold text-center animate-fade-in">
               🎉 Berhasil memuat seluruh tempat legendaris dari preset ke dalam Itinerary Anda!
+            </div>
+          )}
+
+          {savedPlan && (
+            <div className="bg-slate-900/80 border border-emerald-500/30 rounded-3xl p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-emerald-300 font-bold">Rencana Disimpan</div>
+                  <div className="text-xs text-slate-400">Disimpan: {new Date(savedPlan.createdAt).toLocaleString('id-ID')}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearSavedPlan}
+                  className="rounded-full border border-slate-700 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-300 hover:border-emerald-300 hover:text-emerald-200 transition-all"
+                >
+                  Hapus
+                </button>
+              </div>
+              <div className="grid gap-2">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/90 p-3">
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500 font-bold">Ringkasan</div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">{savedPlan.planSummary}</p>
+                  <p className="text-[11px] text-cyan-200 font-semibold">{savedPlan.budgetStatus}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/90 p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500 font-bold">Destinasi Tersimpan</div>
+                  {savedPlan.items.map((item) => (
+                    <div key={item.id} className="text-[10px] text-slate-300">
+                      • {item.name} ({item.category})
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {backendStatus && (
+                <div className="text-[10px] text-slate-400 mt-2">{backendStatus}</div>
+              )}
+            </div>
+          )}
+
+          {savedPlans.length > 0 && (
+            <div className="bg-slate-900/80 border border-cyan-500/20 rounded-3xl p-4 space-y-3">
+              <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-300 font-bold">Rencana akun tersimpan</div>
+              <div className="grid gap-3">
+                {savedPlans.map((plan) => (
+                  <div key={plan.id} className="rounded-2xl border border-slate-800 bg-slate-950/90 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-bold text-white">{plan.title}</div>
+                        <div className="text-[10px] text-slate-500">{new Date(plan.created_at).toLocaleString('id-ID')}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleLoadPlanFromBackend(plan.id)}
+                          className="rounded-full border border-cyan-500 px-3 py-1 text-[10px] text-cyan-200 hover:bg-cyan-500/10 transition-all"
+                        >
+                          Muat
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBackendPlan(plan.id)}
+                          className="rounded-full border border-rose-500 px-3 py-1 text-[10px] text-rose-300 hover:bg-rose-500/10 transition-all"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-2">{plan.summary}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showToast && (
+            <div className="fixed bottom-8 right-8 z-50 max-w-sm rounded-3xl border border-cyan-500/20 bg-slate-950/95 p-4 shadow-2xl shadow-cyan-500/10">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 text-cyan-300">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">Pemberitahuan</div>
+                  <p className="text-xs text-slate-300 mt-1">{toastMessage}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showConfirmModal && (
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
+              <div className="w-full max-w-md rounded-3xl border border-cyan-500/20 bg-slate-900 p-6 shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-2xl bg-cyan-500/10 p-3 text-cyan-300">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white">Rencana Disimpan</div>
+                    <p className="text-xs text-slate-400">Rencana perjalanan Anda telah disimpan dalam akun Premium dan tersedia di daftar rencana tersimpan.</p>
+                  </div>
+                </div>
+                <div className="mt-5 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmModal(false)}
+                    className="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-300 hover:border-cyan-500 hover:text-cyan-200 transition-all"
+                  >
+                    Tutup
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowConfirmModal(false);
+                    }}
+                    className="rounded-full bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition-all"
+                  >
+                    Lihat Daftar Rencana
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
